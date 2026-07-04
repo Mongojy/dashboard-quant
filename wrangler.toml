@@ -1,4 +1,4 @@
-name = "qats-dashboard-api"
+name = "dashboard-quant"
 main = "src/index.ts"
 compatibility_date = "2026-07-04"
 
