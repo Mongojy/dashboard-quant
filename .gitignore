@@ -7,6 +7,7 @@ venv/
 dist/
 build/
 out/
+.wrangler/
 
 # Environment
 .env
@@ -31,4 +32,5 @@ Thumbs.db
 *.temp
 
 # work documentations
-INSTRUCTIONS.md 
+INSTRUCTIONS.md
+.claude/

@@ -1,0 +1,14 @@
+name = "qats-dashboard-api"
+main = "src/index.ts"
+compatibility_date = "2026-07-04"
+
+[[r2_buckets]]
+binding = "DATA_BUCKET"
+bucket_name = "qats-dashboard-data"
+
+# Required environment variables — set via `wrangler secret put <NAME>`,
+# never committed here:
+#   ACCESS_TEAM_DOMAIN       team subdomain only, e.g. "myteam"
+#   ACCESS_AUD               the Access application's AUD tag
+#   ACCESS_ALLOWED_EMAIL     the single operator email allowed through
+#   ACCESS_JWKS_TTL_SECONDS  optional, JWKS cache TTL in seconds (default 3600)
