@@ -7,6 +7,11 @@ workers_dev = false
 binding = "DATA_BUCKET"
 bucket_name = "qats-dashboard-data"
 
+[assets]
+directory = "./public"
+not_found_handling = "404-page"
+run_worker_first = ["/api/*"]
+
 # Required environment variables — set via `wrangler secret put <NAME>`,
 # never committed here:
 #   ACCESS_TEAM_DOMAIN       team subdomain only, e.g. "myteam"
