@@ -34,3 +34,6 @@ Thumbs.db
 # work documentations
 INSTRUCTIONS.md
 .claude/
+
+# local files
+test/
