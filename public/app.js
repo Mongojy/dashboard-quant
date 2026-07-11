@@ -1,4 +1,5 @@
 import { getStreams } from "./data.js";
+import { escapeHtml } from "./format.js";
 import { renderDashboard } from "./views/dashboard.js";
 import { renderStream } from "./views/stream.js";
 
@@ -10,7 +11,7 @@ let summary = null;
 function renderSidebar() {
   const streams = summary ? getStreams(summary) : [];
   const links = streams
-    .map((s) => `<li><a href="#/stream/${encodeURIComponent(s.strategy_id)}">${s.strategy_id}</a></li>`)
+    .map((s) => `<li><a href="#/stream/${encodeURIComponent(s.strategy_id)}">${escapeHtml(s.strategy_id)}</a></li>`)
     .join("");
 
   sidebarEl.innerHTML = `
@@ -33,7 +34,7 @@ function renderView() {
 }
 
 function renderError(message) {
-  viewEl.innerHTML = `<p class="error-state">Failed to load summary: ${message}</p>`;
+  viewEl.innerHTML = `<p class="error-state">Failed to load summary: ${escapeHtml(message)}</p>`;
 }
 
 async function init() {

@@ -1,5 +1,5 @@
 import { getStreams, forwardPnlPct } from "../data.js";
-import { fmtPct, fmtNum, fmtVote, fmtOrDash } from "../format.js";
+import { escapeHtml, fmtPct, fmtNum, fmtVote, fmtOrDash } from "../format.js";
 import { equitySparklineSvg } from "../chart.js";
 
 function renderPositionsTable(positions) {
@@ -11,11 +11,11 @@ function renderPositionsTable(positions) {
     .map(
       (p) => `
       <tr>
-        <td>${fmtOrDash(p.base_asset)}</td>
-        <td>${fmtOrDash(p.side)}</td>
-        <td>${fmtOrDash(p.leg)}</td>
+        <td>${escapeHtml(fmtOrDash(p.base_asset))}</td>
+        <td>${escapeHtml(fmtOrDash(p.side))}</td>
+        <td>${escapeHtml(fmtOrDash(p.leg))}</td>
         <td>${fmtVote(p.vote)}</td>
-        <td>${fmtOrDash(p.open_ts)}</td>
+        <td>${escapeHtml(fmtOrDash(p.open_ts))}</td>
         <td>${fmtOrDash(p.days_held)}</td>
         <td>${fmtNum(p.open_price, 4)}</td>
         <td>${fmtPct(p.size_pct)}</td>
@@ -52,14 +52,15 @@ function renderVerdictProgress(vp) {
 export function renderStream(summary, streamId) {
   const stream = getStreams(summary).find((s) => s.strategy_id === streamId);
   if (!stream) {
-    return `<p class="empty-state">Unknown stream: ${streamId}</p>`;
+    // streamId comes straight from the URL hash — escaping here is the XSS fix.
+    return `<p class="empty-state">Unknown stream: ${escapeHtml(streamId)}</p>`;
   }
 
   return `
     <section class="stream-view">
       <header class="stream-view__header">
-        <h2>${stream.strategy_id}</h2>
-        <span>anchor ${fmtOrDash(stream.anchor_date)}</span>
+        <h2>${escapeHtml(stream.strategy_id)}</h2>
+        <span>anchor ${escapeHtml(fmtOrDash(stream.anchor_date))}</span>
       </header>
 
       ${equitySparklineSvg(stream.equity_series)}
