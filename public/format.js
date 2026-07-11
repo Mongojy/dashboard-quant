@@ -1,6 +1,18 @@
 // Shared formatting helpers. Every function tolerates null/undefined and
 // renders "—" instead of throwing or printing "NaN"/"null".
 
+// HTML-escape for any value interpolated into innerHTML. Mandatory for
+// untrusted input (URL hash, error messages); cheap defense-in-depth for
+// summary-derived strings.
+export function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 // For signed deltas (PnL, net exposure) where +/- carries meaning.
 export function fmtPct(value, decimals = 2) {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
