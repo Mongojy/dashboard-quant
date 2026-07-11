@@ -26,6 +26,29 @@ async function serveR2Json(bucket: R2Bucket, key: string): Promise<Response> {
   });
 }
 
+const SUMMARY_KEY = "dashboard_summary.json";
+const GENERATED_AT_RE = /"generated_at"\s*:\s*"([^"]*)"/;
+
+export async function serveSummary(bucket: R2Bucket): Promise<Response> {
+  let object: R2ObjectBody | null;
+  try {
+    object = await bucket.get(SUMMARY_KEY);
+  } catch {
+    return jsonError(502, "r2_read_failed");
+  }
+  if (!object) return jsonError(503, "summary_not_available");
+
+  const text = await object.text();
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "cache-control": "private, max-age=30",
+  };
+  const match = GENERATED_AT_RE.exec(text);
+  if (match) headers["X-Summary-Generated-At"] = match[1];
+
+  return new Response(text, { status: 200, headers });
+}
+
 async function serveSignalsLatest(bucket: R2Bucket): Promise<Response> {
   const manifestKey = "signals_manifest.json";
   const manifestObject = await bucket.get(manifestKey);
@@ -73,6 +96,8 @@ export default {
         return serveSignalsLatest(env.DATA_BUCKET);
       case "/api/verdicts":
         return serveR2Json(env.DATA_BUCKET, "gate_verdicts.json");
+      case "/api/summary":
+        return serveSummary(env.DATA_BUCKET);
       default:
         return jsonError(404, "not_found");
     }

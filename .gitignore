@@ -32,5 +32,10 @@ Thumbs.db
 *.temp
 
 # work documentations
-INSTRUCTIONS.md
-.claude/
+INSTRUCTIONS.md 
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+!.env.example
