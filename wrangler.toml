@@ -1,4 +1,4 @@
-name = 'dashboard-quant'
+name = "dashboard-quant"
 main = "src/index.ts"
 compatibility_date = "2026-07-04"
 workers_dev = false
