@@ -32,7 +32,11 @@ Thumbs.db
 *.temp
 
 # work documentations
-INSTRUCTIONS.md 
+INSTRUCTIONS.md
+.claude/
+
+# local files
+test/
 
 # wrangler files
 .wrangler
