@@ -40,6 +40,19 @@ export function fmtOrDash(value) {
   return value === null || value === undefined || value === "" ? "—" : String(value);
 }
 
+// Splits an open_ts ("YYYY-MM-DDTHH:MM:SS+00:00") into date/time for a
+// two-row table cell. String-split on purpose (no Date parsing) so this
+// can't be shifted by the runtime's local timezone. The source is always
+// UTC (+00:00) and that's what's displayed — not the operator's local
+// time — a deliberate simplification, not an oversight.
+export function splitOpenTs(value) {
+  if (typeof value !== "string" || !value.includes("T")) {
+    return { date: fmtOrDash(value), time: null };
+  }
+  const [date, rest] = value.split("T");
+  return { date, time: rest.slice(0, 5) };
+}
+
 // Whole days between two ISO date strings (YYYY-MM-DD), ignoring time-of-day.
 function daysBetween(fromDate, toDate) {
   const from = new Date(`${fromDate}T00:00:00Z`);

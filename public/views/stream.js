@@ -1,6 +1,6 @@
-import { getStreams, forwardPnlPct } from "../data.js";
-import { escapeHtml, fmtPct, fmtNum, fmtVote, fmtOrDash } from "../format.js";
-import { equitySparklineSvg } from "../chart.js";
+import { getStreams, forwardPnlPct, netPnlPctSeries } from "../data.js";
+import { escapeHtml, fmtPct, fmtNum, fmtVote, fmtOrDash, splitOpenTs } from "../format.js";
+import { netPnlChartSvg } from "../chart.js";
 
 function renderPositionsTable(positions) {
   if (!Array.isArray(positions) || positions.length === 0) {
@@ -8,28 +8,31 @@ function renderPositionsTable(positions) {
   }
 
   const rows = positions
-    .map(
-      (p) => `
+    .map((p) => {
+      const opened = splitOpenTs(p.open_ts);
+      return `
       <tr>
         <td>${escapeHtml(fmtOrDash(p.base_asset))}</td>
         <td>${escapeHtml(fmtOrDash(p.side))}</td>
-        <td>${escapeHtml(fmtOrDash(p.leg))}</td>
         <td>${fmtVote(p.vote)}</td>
-        <td>${escapeHtml(fmtOrDash(p.open_ts))}</td>
+        <td>
+          <div>${escapeHtml(opened.date)}</div>
+          ${opened.time ? `<div class="cell-sub">${escapeHtml(opened.time)}</div>` : ""}
+        </td>
         <td>${fmtOrDash(p.days_held)}</td>
         <td>${fmtNum(p.open_price, 4)}</td>
         <td>${fmtPct(p.size_pct)}</td>
         <td>${fmtPct(p.unreal_pnl_pct)}</td>
       </tr>
-    `,
-    )
+    `;
+    })
     .join("");
 
   return `
     <table class="positions-table">
       <thead>
         <tr>
-          <th>Asset</th><th>Side</th><th>Leg</th><th>Vote</th><th>Opened</th>
+          <th>Asset</th><th>Side</th><th>Vote</th><th>Opened</th>
           <th>Days held</th><th>Open price</th><th>Size %</th><th>Unreal PnL %</th>
         </tr>
       </thead>
@@ -63,7 +66,7 @@ export function renderStream(summary, streamId) {
         <span>anchor ${escapeHtml(fmtOrDash(stream.anchor_date))}</span>
       </header>
 
-      ${equitySparklineSvg(stream.equity_series)}
+      ${netPnlChartSvg(netPnlPctSeries(stream))}
 
       <div class="metric"><span class="metric__label">Net PnL</span><span class="metric__value">${fmtPct(forwardPnlPct(stream))}</span></div>
 
