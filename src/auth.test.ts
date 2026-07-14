@@ -1,40 +1,23 @@
-// Standalone check for src/auth.ts — no test framework/deps required.
+// Tests for src/auth.ts (Cf-Access-Jwt-Assertion validation).
 //
-// Run:   npx tsx src/auth.test.ts
-// (npx fetches tsx on demand; requires Node 18+ for global fetch/crypto.subtle/atob)
-//
-// Exercises requireAccessAuth() end-to-end against a real RSA-signed JWT and
-// a mocked JWKS endpoint, covering the four required scenarios:
-//   1. missing header       -> 401
-//   2. invalid signature    -> 401
-//   3. wrong email          -> 401
-//   4. valid token          -> passthrough (null)
-//
-// --- Manual curl checks against a deployed Worker ---
-// 1. Missing header:
-//   curl -i https://<worker>/api/health
-//   -> expect HTTP/1.1 401, body {"error":"unauthorized","reason":"missing_jwt"}
-//
-// 2. Invalid signature (tamper a real token's last few chars):
-//   curl -i https://<worker>/api/health -H "Cf-Access-Jwt-Assertion: <token-with-flipped-last-char>"
-//   -> expect 401, reason "bad_signature"
-//
-// 3. Wrong email (token issued to an email not in ACCESS_ALLOWED_EMAIL):
-//   curl -i https://<worker>/api/health -H "Cf-Access-Jwt-Assertion: <token-for-other-user>"
-//   -> expect 401, reason "email_not_allowed"
-//
-// 4. Valid token (obtain via `cloudflared access login <app-url>` or the
-//    CF_Authorization cookie set by a browser login through Access):
-//   curl -i https://<worker>/api/health -H "Cf-Access-Jwt-Assertion: $(cloudflared access token -app=<app-url>)"
-//   -> expect 200 and the real route response
+// Runs under @cloudflare/vitest-pool-workers. The JWKS endpoint is mocked by
+// monkey-patching global fetch (same pattern as src/summary.test.ts) — the
+// mock serves whatever is in `servedKeys` and increments `fetchCallCount` so
+// tests can assert exactly how many JWKS fetches a scenario triggers.
 
-import assert from "node:assert/strict";
+import { beforeEach, describe, expect, it } from "vitest";
 import { requireAccessAuth } from "./auth";
 
 const TEAM_DOMAIN = "test-team";
+const ISS = `https://${TEAM_DOMAIN}.cloudflareaccess.com`;
 const AUD = "test-aud-tag";
 const ALLOWED_EMAIL = "operator@example.com";
-const KID = "test-key-1";
+
+const env = {
+  ACCESS_TEAM_DOMAIN: TEAM_DOMAIN,
+  ACCESS_AUD: AUD,
+  ACCESS_ALLOWED_EMAIL: ALLOWED_EMAIL,
+};
 
 function base64UrlEncode(bytes: ArrayBuffer | Uint8Array): string {
   const buf = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -55,96 +38,134 @@ async function makeKeyPair() {
   );
 }
 
-async function signJwt(privateKey: CryptoKey, payload: Record<string, unknown>): Promise<string> {
-  const header = { alg: "RS256", typ: "JWT", kid: KID };
+async function signJwt(privateKey: CryptoKey, kid: string, payload: Record<string, unknown>): Promise<string> {
+  const header = { alg: "RS256", typ: "JWT", kid };
   const headerB64 = base64UrlEncodeJson(header);
   const payloadB64 = base64UrlEncodeJson(payload);
   const signingInput = `${headerB64}.${payloadB64}`;
-  const sig = await crypto.subtle.sign(
-    "RSASSA-PKCS1-v1_5",
-    privateKey,
-    new TextEncoder().encode(signingInput),
-  );
+  const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", privateKey, new TextEncoder().encode(signingInput));
   return `${signingInput}.${base64UrlEncode(sig)}`;
 }
 
-async function main() {
-  const { publicKey, privateKey } = await makeKeyPair();
-  const publicJwk = await crypto.subtle.exportKey("jwk", publicKey);
+let servedKeys: Array<Record<string, unknown>> = [];
+let fetchCallCount = 0;
 
+beforeEach(() => {
+  servedKeys = [];
+  fetchCallCount = 0;
   (globalThis as unknown as { fetch: typeof fetch }).fetch = (async (url: string | URL) => {
     const href = typeof url === "string" ? url : url.toString();
     if (href === `https://${TEAM_DOMAIN}.cloudflareaccess.com/cdn-cgi/access/certs`) {
-      return new Response(JSON.stringify({ keys: [{ ...publicJwk, kid: KID }] }), {
+      fetchCallCount++;
+      return new Response(JSON.stringify({ keys: servedKeys }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
     }
     throw new Error(`unexpected fetch: ${href}`);
   }) as typeof fetch;
+});
 
-  const env = {
-    ACCESS_TEAM_DOMAIN: TEAM_DOMAIN,
-    ACCESS_AUD: AUD,
-    ACCESS_ALLOWED_EMAIL: ALLOWED_EMAIL,
-  };
-
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const basePayload = { aud: AUD, email: ALLOWED_EMAIL, iat: nowSeconds, exp: nowSeconds + 3600 };
-
-  // 1. missing header -> 401
-  {
-    const req = new Request("https://worker.example/api/health");
-    const res = await requireAccessAuth(req, env);
-    assert.ok(res, "expected a Response for missing header");
-    assert.equal(res!.status, 401);
-    const body = await res!.json();
-    assert.equal((body as { reason: string }).reason, "missing_jwt");
-    console.log("PASS: missing header -> 401");
-  }
-
-  // 2. invalid signature -> 401
-  {
-    const token = await signJwt(privateKey, basePayload);
-    const tampered = token.slice(0, -4) + (token.slice(-4) === "AAAA" ? "BBBB" : "AAAA");
-    const req = new Request("https://worker.example/api/health", {
-      headers: { "Cf-Access-Jwt-Assertion": tampered },
-    });
-    const res = await requireAccessAuth(req, env);
-    assert.ok(res, "expected a Response for invalid signature");
-    assert.equal(res!.status, 401);
-    console.log("PASS: invalid signature -> 401");
-  }
-
-  // 3. wrong email -> 401
-  {
-    const token = await signJwt(privateKey, { ...basePayload, email: "someone-else@example.com" });
-    const req = new Request("https://worker.example/api/health", {
-      headers: { "Cf-Access-Jwt-Assertion": token },
-    });
-    const res = await requireAccessAuth(req, env);
-    assert.ok(res, "expected a Response for wrong email");
-    assert.equal(res!.status, 401);
-    const body = await res!.json();
-    assert.equal((body as { reason: string }).reason, "email_not_allowed");
-    console.log("PASS: wrong email -> 401");
-  }
-
-  // 4. valid token -> passthrough (null)
-  {
-    const token = await signJwt(privateKey, basePayload);
-    const req = new Request("https://worker.example/api/health", {
-      headers: { "Cf-Access-Jwt-Assertion": token },
-    });
-    const res = await requireAccessAuth(req, env);
-    assert.equal(res, null, "expected passthrough (null) for a valid token");
-    console.log("PASS: valid token -> passthrough");
-  }
-
-  console.log("\nAll auth checks passed.");
+function request(token: string): Request {
+  return new Request("https://worker.example/api/health", {
+    headers: { "Cf-Access-Jwt-Assertion": token },
+  });
 }
 
-main().catch((err) => {
-  console.error("FAIL:", err);
-  process.exit(1);
+async function addKey(kid: string) {
+  const { publicKey, privateKey } = await makeKeyPair();
+  const jwk = await crypto.subtle.exportKey("jwk", publicKey);
+  servedKeys.push({ ...jwk, kid });
+  return privateKey;
+}
+
+function basePayload(extra?: Record<string, unknown>) {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  return { iss: ISS, aud: AUD, email: ALLOWED_EMAIL, iat: nowSeconds, exp: nowSeconds + 3600, ...extra };
+}
+
+describe("requireAccessAuth", () => {
+  it("rejects a missing header", async () => {
+    const res = await requireAccessAuth(new Request("https://worker.example/api/health"), env);
+    expect(res?.status).toBe(401);
+    expect((await res!.json()) as { reason: string }).toMatchObject({ reason: "missing_jwt" });
+  });
+
+  it("rejects an invalid signature", async () => {
+    const privateKey = await addKey("kid-sig");
+    const token = await signJwt(privateKey, "kid-sig", basePayload());
+    const tampered = token.slice(0, -4) + (token.slice(-4) === "AAAA" ? "BBBB" : "AAAA");
+    const res = await requireAccessAuth(request(tampered), env);
+    expect(res?.status).toBe(401);
+  });
+
+  it("rejects a wrong email", async () => {
+    const privateKey = await addKey("kid-email");
+    const token = await signJwt(privateKey, "kid-email", basePayload({ email: "someone-else@example.com" }));
+    const res = await requireAccessAuth(request(token), env);
+    expect(res?.status).toBe(401);
+    expect((await res!.json()) as { reason: string }).toMatchObject({ reason: "email_not_allowed" });
+  });
+
+  it("passes through a valid token", async () => {
+    const privateKey = await addKey("kid-valid");
+    const token = await signJwt(privateKey, "kid-valid", basePayload());
+    const res = await requireAccessAuth(request(token), env);
+    expect(res).toBeNull();
+  });
+
+  it("rejects a token with no exp claim", async () => {
+    const privateKey = await addKey("kid-noexp");
+    const payload = basePayload();
+    delete (payload as Record<string, unknown>).exp;
+    const token = await signJwt(privateKey, "kid-noexp", payload);
+    const res = await requireAccessAuth(request(token), env);
+    expect(res?.status).toBe(401);
+    expect((await res!.json()) as { reason: string }).toMatchObject({ reason: "missing_exp" });
+  });
+
+  it("rejects a wrong iss", async () => {
+    const privateKey = await addKey("kid-iss");
+    const token = await signJwt(privateKey, "kid-iss", basePayload({ iss: "https://someone-elses-team.cloudflareaccess.com" }));
+    const res = await requireAccessAuth(request(token), env);
+    expect(res?.status).toBe(401);
+    expect((await res!.json()) as { reason: string }).toMatchObject({ reason: "iss_mismatch" });
+  });
+
+  it("on unknown kid, forces exactly one JWKS refetch and succeeds once the new key is present", async () => {
+    // Prime the cache with an initial key so the lookup below is a genuine
+    // cache miss rather than a cold-start fetch.
+    const primeKey = await addKey("kid-prime");
+    const primeToken = await signJwt(primeKey, "kid-prime", basePayload());
+    expect(await requireAccessAuth(request(primeToken), env)).toBeNull();
+
+    // Simulate CF Access rotating in a new key server-side, then a token
+    // signed with that new kid arrives before our cache would naturally
+    // expire.
+    const rotatedKey = await addKey("kid-rotated");
+    const rotatedToken = await signJwt(rotatedKey, "kid-rotated", basePayload());
+
+    fetchCallCount = 0;
+    const res = await requireAccessAuth(request(rotatedToken), env);
+
+    expect(res).toBeNull();
+    expect(fetchCallCount).toBe(1);
+  });
+
+  it("rejects an unknown kid that is still absent after the forced refetch", async () => {
+    const primeKey = await addKey("kid-prime-2");
+    const primeToken = await signJwt(primeKey, "kid-prime-2", basePayload());
+    expect(await requireAccessAuth(request(primeToken), env)).toBeNull();
+
+    // Sign with a kid that never appears in the server's JWKS at all.
+    const strayKey = await makeKeyPair();
+    const strayToken = await signJwt(strayKey.privateKey, "kid-never-published", basePayload());
+
+    fetchCallCount = 0;
+    const res = await requireAccessAuth(request(strayToken), env);
+
+    expect(res?.status).toBe(401);
+    expect((await res!.json()) as { reason: string }).toMatchObject({ reason: "unknown_kid" });
+    expect(fetchCallCount).toBe(1);
+  });
 });

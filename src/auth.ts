@@ -19,7 +19,8 @@
 // Required Worker env bindings (wrangler.toml [vars] / `wrangler secret put`,
 // values never committed):
 //   ACCESS_TEAM_DOMAIN    team subdomain only, e.g. "myteam"
-//                         (JWKS = https://myteam.cloudflareaccess.com/cdn-cgi/access/certs)
+//                         (JWKS = https://myteam.cloudflareaccess.com/cdn-cgi/access/certs;
+//                         expected `iss` = https://myteam.cloudflareaccess.com)
 //   ACCESS_AUD            the Access application's AUD tag
 //   ACCESS_ALLOWED_EMAIL  the single operator email allowed through
 // Optional:
@@ -83,11 +84,12 @@ async function fetchJwks(teamDomain: string): Promise<Jwk[]> {
   return body.keys;
 }
 
-async function getJwks(env: AccessEnv): Promise<Jwk[]> {
+async function getJwks(env: AccessEnv, opts?: { forceRefresh?: boolean }): Promise<Jwk[]> {
   const ttlSeconds = Number(env.ACCESS_JWKS_TTL_SECONDS) || DEFAULT_JWKS_TTL_SECONDS;
   const now = Date.now();
 
   if (
+    !opts?.forceRefresh &&
     jwksCache &&
     jwksCache.teamDomain === env.ACCESS_TEAM_DOMAIN &&
     now - jwksCache.fetchedAt < ttlSeconds * 1000
@@ -136,8 +138,15 @@ async function verifyAccessJwt(token: string, env: AccessEnv): Promise<void> {
   if (!header.kid) throw new AuthError("missing_kid");
 
   const keys = await getJwks(env);
-  const jwk = keys.find((k) => k.kid === header.kid);
-  if (!jwk) throw new AuthError("unknown_kid");
+  let jwk = keys.find((k) => k.kid === header.kid);
+  if (!jwk) {
+    // Unknown kid may just mean CF Access rotated keys since our last cache
+    // fill — bypass the cache once to pick up a same-request key rotation
+    // instead of failing until the TTL naturally expires.
+    const refreshedKeys = await getJwks(env, { forceRefresh: true });
+    jwk = refreshedKeys.find((k) => k.kid === header.kid);
+    if (!jwk) throw new AuthError("unknown_kid");
+  }
 
   const key = await importJwk(jwk);
   const signature = base64UrlDecode(signatureB64);
@@ -151,12 +160,14 @@ async function verifyAccessJwt(token: string, env: AccessEnv): Promise<void> {
   if (!validSignature) throw new AuthError("bad_signature");
 
   const nowSeconds = Date.now() / 1000;
-  if (typeof payload.exp === "number" && nowSeconds >= payload.exp) {
-    throw new AuthError("expired_token");
-  }
+  if (typeof payload.exp !== "number") throw new AuthError("missing_exp");
+  if (nowSeconds >= payload.exp) throw new AuthError("expired_token");
   if (typeof payload.nbf === "number" && nowSeconds < payload.nbf) {
     throw new AuthError("token_not_yet_valid");
   }
+
+  const expectedIss = `https://${env.ACCESS_TEAM_DOMAIN}.cloudflareaccess.com`;
+  if (payload.iss !== expectedIss) throw new AuthError("iss_mismatch");
 
   const aud = payload.aud;
   const audMatches = Array.isArray(aud) ? aud.includes(env.ACCESS_AUD) : aud === env.ACCESS_AUD;

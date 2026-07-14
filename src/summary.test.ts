@@ -70,7 +70,13 @@ beforeAll(async () => {
   }) as typeof fetch;
 
   const nowSeconds = Math.floor(Date.now() / 1000);
-  validToken = await signJwt(privateKey, { aud: AUD, email: ALLOWED_EMAIL, iat: nowSeconds, exp: nowSeconds + 3600 });
+  validToken = await signJwt(privateKey, {
+    iss: `https://${TEAM_DOMAIN}.cloudflareaccess.com`,
+    aud: AUD,
+    email: ALLOWED_EMAIL,
+    iat: nowSeconds,
+    exp: nowSeconds + 3600,
+  });
 });
 
 function authedRequest(path: string, init?: RequestInit): Request {
